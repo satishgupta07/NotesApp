@@ -37,14 +37,16 @@ Then either:
 ```
 NotesApp/
 ├── app/                        # Expo Router screens (each file = one route)
-│   ├── _layout.tsx             # Root Stack navigator + header config
-│   └── index.tsx               # Home Screen — notes list
+│   ├── _layout.tsx             # Root Stack navigator + shared header config
+│   ├── index.tsx               # Home Screen — notes list
+│   └── detail.tsx              # Detail Screen — full note view  (Step 4)
 │
 ├── src/
 │   ├── components/             # Reusable UI pieces
 │   │   ├── NoteCard.tsx        # Single note row with category badge
 │   │   ├── EmptyState.tsx      # Shown when the list has no items
-│   │   └── FAB.tsx             # Floating Action Button (the + button)
+│   │   ├── FAB.tsx             # Floating Action Button (the + button)
+│   │   └── CreateNoteModal.tsx # Slide-up form to create a new note  (Step 3)
 │   │
 │   ├── constants/
 │   │   ├── colors.ts           # Central colour palette
@@ -67,9 +69,9 @@ NotesApp/
 |------|-------|--------|
 | 1 | Home Screen — Static List | ✅ Done |
 | 2 | NoteCard Component — Categories & Dynamic Styling | ✅ Done |
-| 3 | Add Note — `useState` + `TextInput` | ⬜ Next |
-| 4 | Navigation — Note Detail Screen | ⬜ |
-| 5 | Edit & Delete Notes | ⬜ |
+| 3 | Add Note — `useState` + `TextInput` + `Modal` | ✅ Done |
+| 4 | Navigation — Note Detail Screen | ✅ Done |
+| 5 | Edit & Delete Notes | ⬜ Next |
 | 6 | Persist Data — AsyncStorage | ⬜ |
 | 7 | Global State — Context API | ⬜ |
 | 8 | Search & Filter | ⬜ |
@@ -189,10 +191,12 @@ const styles = StyleSheet.create({
 Every file inside `app/` automatically becomes a screen. No manual route registration.
 
 ```
-app/index.tsx      →  "/"          (Home Screen)
-app/detail.tsx     →  "/detail"    (Detail Screen — Step 4)
-app/create.tsx     →  "/create"    (Create Screen — Step 3)
+app/index.tsx      →  "/"        (Home Screen)
+app/detail.tsx     →  "/detail"  (Detail Screen — Step 4)
 ```
+
+> Note creation (Step 3) uses a `Modal` overlay rather than a separate route,
+> so there is no `create.tsx` file. Step 7 (Context API) will revisit this.
 
 `app/_layout.tsx` wraps all sibling screens — like a template that stays on screen
 while the inner route changes.
@@ -338,14 +342,244 @@ const cats = ["Personal", "Work"] as const;
 
 ---
 
+### Step 3 — Add Note: `useState`, `TextInput`, `Modal`
+
+#### `useState<T>()` — Local State
+Gives a component its own memory. Every time the setter is called, React
+re-renders the component with the new value.
+
+```tsx
+// Syntax: const [value, setValue] = useState<Type>(initialValue)
+
+const [notes, setNotes]         = useState<Note[]>(SAMPLE_NOTES); // typed array
+const [modalVisible, setVisible] = useState(false);               // boolean inferred
+const [title, setTitle]          = useState("");                   // string inferred
+```
+
+> **Never mutate state directly.**
+> `notes.push(x)` — React doesn't see the change, no re-render.
+> `setNotes([x, ...notes])` — React sees a new array, re-renders. ✅
+
+---
+
+#### Functional State Update
+When the new state depends on the previous state, pass a function to the setter.
+React guarantees the function receives the **latest** value.
+
+```tsx
+// ❌ May use a stale closure value of `notes`
+setNotes([newNote, ...notes]);
+
+// ✅ `prev` is always the freshest value
+setNotes((prev) => [newNote, ...prev]);
+```
+
+---
+
+#### Controlled `TextInput`
+A "controlled" input means React owns the displayed value via state.
+The flow is: user types → `onChangeText` → `setState` → React re-renders → input shows new value.
+
+```tsx
+const [title, setTitle] = useState("");
+
+<TextInput
+  value={title}            // React controls what is displayed
+  onChangeText={setTitle}  // called on every keystroke with the new string
+  placeholder="Note title…"
+/>
+```
+
+| Prop | Purpose |
+|------|---------|
+| `value` | The text to display — driven by state |
+| `onChangeText` | Callback receiving the full new string on each keystroke |
+| `multiline` | Allows multiple lines (like a `<textarea>`) |
+| `textAlignVertical` | Android: `"top"` keeps cursor at the top of a multiline input |
+| `returnKeyType` | Changes the keyboard's return key label (`"next"`, `"done"`, `"search"`) |
+| `maxLength` | Hard cap on character count |
+
+---
+
+#### `Modal` — Native Overlay
+Renders its children above the current screen without navigating to a new route.
+
+```tsx
+<Modal
+  visible={isOpen}           // show/hide
+  animationType="slide"      // "none" | "slide" | "fade"
+  presentationStyle="pageSheet" // iOS: card with rounded corners
+  onRequestClose={handleClose}  // Android: called when hardware Back is pressed
+>
+  {/* form content */}
+</Modal>
+```
+
+---
+
+#### `KeyboardAvoidingView` + `Platform.OS`
+Adjusts layout height/padding so the software keyboard never hides an input.
+
+```tsx
+import { KeyboardAvoidingView, Platform } from "react-native";
+
+<KeyboardAvoidingView
+  style={{ flex: 1 }}
+  behavior={Platform.OS === "ios" ? "padding" : "height"}
+>
+  <TextInput ... />
+</KeyboardAvoidingView>
+```
+
+`Platform.OS` returns `"ios"` | `"android"` | `"web"`.
+Use it to write platform-specific logic without separate files.
+
+---
+
+#### Form Validation & State Reset
+
+```tsx
+function handleSave() {
+  if (!title.trim()) {          // .trim() removes leading/trailing whitespace
+    setError("Title required");
+    return;                     // stop early — don't save
+  }
+
+  const newNote: Note = {
+    id: Date.now().toString(),  // milliseconds since epoch = unique-enough local ID
+    title: title.trim(),
+    content: content.trim(),
+    category,
+    createdAt: new Date().toISOString(),
+  };
+
+  onSave(newNote);
+  // Reset every field so the form is clean next time it opens
+  setTitle(""); setContent(""); setCategory("Personal"); setError("");
+}
+```
+
+---
+
+### Step 4 — Navigation: Detail Screen & URL Params
+
+#### `useRouter` — Programmatic Navigation
+The hook that gives you the router object inside any component.
+
+```tsx
+import { useRouter } from "expo-router";
+
+const router = useRouter();
+
+router.push("/detail");          // navigate forward (adds to stack)
+router.back();                   // go back one screen
+router.replace("/home");         // navigate without adding to stack (no back button)
+```
+
+---
+
+#### `router.push()` with Params
+Pass data to the next screen as URL query params.
+
+```tsx
+router.push({
+  pathname: "/detail",
+  params: {
+    id:        item.id,
+    title:     item.title,
+    content:   item.content,
+    category:  item.category ?? "", // undefined is not a valid param value
+    createdAt: item.createdAt,
+  },
+});
+```
+
+> **All param values must be strings.** Numbers, booleans, and undefined must be
+> converted before passing (`String(num)`, `flag ? "true" : "false"`, `val ?? ""`).
+
+---
+
+#### `useLocalSearchParams<T>()` — Reading Params
+Read the params in the destination screen. The generic `<T>` types the result.
+
+```tsx
+import { useLocalSearchParams } from "expo-router";
+
+const { id, title, content, category, createdAt } = useLocalSearchParams<{
+  id:        string;
+  title:     string;
+  content:   string;
+  category:  string;
+  createdAt: string;
+}>();
+
+// Params arrive as strings — cast/parse as needed
+const noteCategory = (category || undefined) as NoteCategory | undefined;
+```
+
+---
+
+#### `<Stack.Screen>` Inside a Component — Dynamic Header
+Render `<Stack.Screen>` anywhere inside a screen to set its header options at runtime.
+
+```tsx
+export default function DetailScreen() {
+  const { title } = useLocalSearchParams<{ title: string }>();
+
+  return (
+    <>
+      {/* Sets the header title to the actual note title */}
+      <Stack.Screen options={{ title: title ?? "Note" }} />
+      <ScrollView>...</ScrollView>
+    </>
+  );
+}
+```
+
+---
+
+#### `screenOptions` — Shared Header Styles
+Apply styles to **all** screens in a Stack at once. Per-screen `options` merge on top.
+
+```tsx
+<Stack
+  screenOptions={{                                   // ← applies to every screen
+    headerStyle: { backgroundColor: Colors.primary },
+    headerTintColor: Colors.white,
+    headerTitleStyle: { fontWeight: "bold" },
+  }}
+>
+  <Stack.Screen name="index"  options={{ title: "My Notes" }} />   // overrides title only
+  <Stack.Screen name="detail" options={{ headerBackTitle: "Notes" }} />
+</Stack>
+```
+
+---
+
+#### `ScrollView` — Scrollable Container
+Unlike `View`, `ScrollView` lets its content exceed the screen height.
+Use it for detail screens, forms, or any content that might be long.
+
+```tsx
+<ScrollView
+  style={styles.container}            // styles the outer scroll container
+  contentContainerStyle={styles.body} // styles the inner scrollable content box
+>
+  <Text>{longContent}</Text>
+</ScrollView>
+```
+
+> Use `FlatList` for **lists** (virtualised, memory-efficient).
+> Use `ScrollView` for **static content** that can be long (forms, detail views).
+
+---
+
 ## Coming Up
 
 | Step | What you'll learn |
 |------|------------------|
-| **Step 3** | `useState`, `TextInput`, controlled components, keyboard handling |
-| **Step 4** | `router.push()`, passing params between screens, Stack header buttons |
-| **Step 5** | Mutating state arrays, `Alert` dialog, swipe-to-delete |
-| **Step 6** | `useEffect`, `async/await`, `AsyncStorage` (persist data on device) |
-| **Step 7** | `createContext`, `useContext`, Provider pattern |
-| **Step 8** | Derived state, filtering arrays, search input |
+| **Step 5** | Mutating state arrays, `Alert` dialog, edit & delete notes |
+| **Step 6** | `useEffect`, `async/await`, `AsyncStorage` — persist data on device |
+| **Step 7** | `createContext`, `useContext`, Provider pattern — global state |
+| **Step 8** | Derived state, filtering arrays, search bar |
 | **Step 9** | Safe area, icons (`@expo/vector-icons`), animated feedback |

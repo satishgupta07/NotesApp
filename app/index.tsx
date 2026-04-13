@@ -15,8 +15,13 @@
  * WHY NOT just do `notes.push(newNote)`?
  *  Mutating the array directly doesn't tell React anything changed,
  *  so the screen would NOT re-render. You must always call the setter.
+ *
+ * WHAT CHANGED IN STEP 4:
+ *  - Imported useRouter for programmatic navigation.
+ *  - Card tap navigates to "/detail" passing the note's fields as params.
  */
 
+import { useRouter } from "expo-router";
 import { useState } from "react";
 import { FlatList, StyleSheet, View } from "react-native";
 
@@ -93,6 +98,18 @@ export default function HomeScreen() {
   const [notes, setNotes] = useState<Note[]>(SAMPLE_NOTES);
 
   /**
+   * useRouter — gives you the router object for programmatic navigation.
+   *
+   * router.push(href)  — navigate to a new screen (adds it to the stack)
+   * router.back()      — go back to the previous screen
+   * router.replace()   — navigate without adding to the stack (no back button)
+   *
+   * We call it inside the component (not at module level) because hooks
+   * must always be called inside a React function component or custom hook.
+   */
+  const router = useRouter();
+
+  /**
    * modalVisible — controls whether the Create Note modal is open or closed.
    *
    * Only two possible values (true / false), so no generic needed —
@@ -133,8 +150,26 @@ export default function HomeScreen() {
           <NoteCard
             note={item}
             onPress={() => {
-              // Step 4: navigate to detail screen
-              console.log("Tapped note:", item.title);
+              /**
+               * router.push() — navigate to the detail screen.
+               *
+               * `pathname` — which route to open ("/detail" = app/detail.tsx)
+               * `params`   — key/value pairs passed as URL query params.
+               *
+               * ALL param values must be strings (URL limitation).
+               * category is optional so we fall back to "" if undefined —
+               * detail.tsx converts "" back to undefined on the other side.
+               */
+              router.push({
+                pathname: "/detail",
+                params: {
+                  id:        item.id,
+                  title:     item.title,
+                  content:   item.content,
+                  category:  item.category ?? "",
+                  createdAt: item.createdAt,
+                },
+              });
             }}
           />
         )}
