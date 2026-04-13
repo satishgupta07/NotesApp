@@ -34,6 +34,7 @@ const SAMPLE_NOTES: Note[] = [
     title: "Welcome to NotesApp!",
     content: "This is your first note. Tap a note to read it, or press + to create one.",
     createdAt: "2024-04-10T09:00:00.000Z",
+    category: "Personal"
   },
   {
     id: "2",
@@ -42,6 +43,7 @@ const SAMPLE_NOTES: Note[] = [
       "In React Native, you cannot use HTML tags like <div> or <p>. " +
       "Instead you use View (like a div) and Text (like a <p> or <span>).",
     createdAt: "2024-04-10T10:15:00.000Z",
+    category: "Learning"
   },
   {
     id: "3",
@@ -50,6 +52,7 @@ const SAMPLE_NOTES: Note[] = [
       "Expo Router is a file-based router. Each file in the app/ folder is a screen. " +
       "Navigation works similar to Next.js on the web.",
     createdAt: "2024-04-11T08:00:00.000Z",
+    category: "Learning"
   },
   {
     id: "4",
@@ -58,7 +61,15 @@ const SAMPLE_NOTES: Note[] = [
       "Using TypeScript helps catch bugs early. " +
       "Define interfaces for your data shapes (see src/types/note.ts).",
     createdAt: "2024-04-11T09:30:00.000Z",
+    category: "Work"
   },
+  {
+    id: "5",
+    title: "App Ideas",
+    content: "1. Habit Tracker  2. Budget splitter  3. Recipe box  4. Travel journal",
+    createdAt: "2024-04-11T09:30:00.000Z",
+    category: "Work"
+  }
 ];
 
 // ---------------------------------------------------------------------------

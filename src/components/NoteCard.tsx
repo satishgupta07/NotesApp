@@ -3,18 +3,20 @@
  *
  * Renders a single note as a tappable card inside the FlatList on the Home Screen.
  *
- * REUSABILITY:
- * Because this component only receives data via props and knows nothing about
- * where the notes come from, it can be dropped into any screen — search results,
- * a pinned-notes section, etc. — without changes.
+ * NEW IN STEP 2:
+ *  - Category badge in the top-right corner with a dynamic background colour
  *
  * CONCEPTS:
- *  - Props interface   : TypeScript type that describes what a component accepts
- *  - numberOfLines     : truncates Text to N lines and adds "…"
- *  - TouchableOpacity  : pressable wrapper; dims on press for visual feedback
+ *  - Props interface        : TypeScript type describing what the component accepts
+ *  - numberOfLines          : clamps Text to N lines, adds "…" automatically
+ *  - TouchableOpacity       : pressable wrapper that dims on press
+ *  - Array style syntax     : style={[styles.base, { backgroundColor: color }]}
+ *  - Optional chaining (?.) : safely access a field that might be undefined
+ *  - Nullish coalescing (??): provide a fallback when a value is null/undefined
  */
 
-import { StyleSheet, Text, TouchableOpacity } from "react-native";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { CATEGORY_COLORS, NoteCategory } from "../constants/categories";
 import { Colors } from "../constants/colors";
 import { Note } from "../types/note";
 import { formatDate } from "../utils/date";
@@ -22,14 +24,6 @@ import { formatDate } from "../utils/date";
 // ---------------------------------------------------------------------------
 // PROPS
 // ---------------------------------------------------------------------------
-/**
- * Props for NoteCard.
- *
- * WHY define a separate Props interface (not inline)?
- * - It shows up in auto-complete when you use <NoteCard ... />
- * - JSDoc comments on each prop appear as tooltips in VS Code
- * - Easier to read than a long inline type
- */
 interface NoteCardProps {
   /** The note data to display */
   note: Note;
@@ -38,28 +32,65 @@ interface NoteCardProps {
 }
 
 // ---------------------------------------------------------------------------
+// SUB-COMPONENT — CategoryBadge
+// ---------------------------------------------------------------------------
+/**
+ * A small coloured pill that shows the note's category.
+ *
+ * WHY a separate inner component?
+ * It has its own logic (colour lookup) and its own style block.
+ * Keeping it separate makes NoteCard easier to read.
+ *
+ * @param category - The category string from the note (may be undefined)
+ */
+function CategoryBadge({ category }: { category?: NoteCategory }) {
+  // If the note has no category, render nothing at all.
+  // `null` in JSX means "render nothing" — it's the idiomatic React way.
+  if (!category) return null;
+
+  /**
+   * DYNAMIC STYLING
+   * ───────────────
+   * React Native supports an *array* of styles on the `style` prop.
+   * Styles are merged left-to-right — later entries override earlier ones.
+   *
+   *   style={[styles.badge, { backgroundColor: badgeColor }]}
+   *            ^^^^^^^^^^ fixed layout   ^^^^^^^^^^^^^^^^^ dynamic colour
+   *
+   * This lets us keep the fixed layout in StyleSheet (efficient, validated)
+   * while injecting a runtime value for the colour.
+   */
+  const badgeColor = CATEGORY_COLORS[category];
+
+  return (
+    <View style={[styles.badge, { backgroundColor: badgeColor }]}>
+      <Text style={styles.badgeText}>{category}</Text>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // COMPONENT
 // ---------------------------------------------------------------------------
 export default function NoteCard({ note, onPress }: NoteCardProps) {
-  /**
-   * Show only a short preview of the content so every card has a consistent
-   * height in the list. The full content is shown on the Detail Screen (Step 4).
-   */
   const preview =
     note.content.length > 80 ? note.content.slice(0, 80) + "…" : note.content;
 
   return (
-    /*
-     * TouchableOpacity
-     * ─ wraps any children and makes them tappable
-     * ─ `activeOpacity={0.7}` means the card becomes 70% opaque while pressed
-     *   (the default is 0.2 which is very dim; 0.7 is a subtle fade)
-     */
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.7}>
-      {/* Title — clamped to 1 line so long titles don't break layout */}
-      <Text style={styles.title} numberOfLines={1}>
-        {note.title}
-      </Text>
+
+      {/*
+        Header row: title on the left, category badge on the right.
+        `flexDirection: "row"` lays children side-by-side (default is "column").
+        `justifyContent: "space-between"` pushes them to opposite ends.
+        `alignItems: "center"` aligns them vertically in the middle.
+      */}
+      <View style={styles.headerRow}>
+        <Text style={styles.title} numberOfLines={1}>
+          {note.title}
+        </Text>
+        <CategoryBadge category={note.category} />
+      </View>
 
       {/* Content preview — clamped to 2 lines */}
       <Text style={styles.preview} numberOfLines={2}>
@@ -68,6 +99,7 @@ export default function NoteCard({ note, onPress }: NoteCardProps) {
 
       {/* Date — formatted from ISO string via our util */}
       <Text style={styles.date}>{formatDate(note.createdAt)}</Text>
+
     </TouchableOpacity>
   );
 }
@@ -81,22 +113,43 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
-    // ── Shadow (iOS) ───────────────────────────────────────────────────────
-    // On iOS, shadow is controlled by four separate properties.
+    // Shadow (iOS)
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 }, // direction of shadow
-    shadowOpacity: 0.08,                   // how dark (0–1)
-    shadowRadius: 4,                        // blur radius
-    // ── Elevation (Android) ────────────────────────────────────────────────
-    // On Android, a single `elevation` number controls the drop shadow.
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    // Shadow (Android)
     elevation: 3,
   },
+
+  // ── Header row (title + badge side by side) ────────────────────────────
+  headerRow: {
+    flexDirection: "row",         // lay children horizontally
+    justifyContent: "space-between", // push title left, badge right
+    alignItems: "center",         // align them on the same vertical axis
+    marginBottom: 6,
+    gap: 8,                       // minimum gap so a long title never overlaps the badge
+  },
   title: {
+    flex: 1,                      // take all remaining width (badge sits after it)
     fontSize: 17,
     fontWeight: "600",
     color: Colors.textPrimary,
-    marginBottom: 6,
   },
+
+  // ── Category badge ─────────────────────────────────────────────────────
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,             // fully rounded pill shape
+  },
+  badgeText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: Colors.white,
+  },
+
+  // ── Content & date ─────────────────────────────────────────────────────
   preview: {
     fontSize: 14,
     color: Colors.textSecondary,
