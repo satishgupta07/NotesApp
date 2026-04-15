@@ -46,11 +46,14 @@ NotesApp/
 │   │   ├── NoteCard.tsx        # Single note row with category badge
 │   │   ├── EmptyState.tsx      # Shown when the list has no items
 │   │   ├── FAB.tsx             # Floating Action Button (the + button)
-│   │   └── CreateNoteModal.tsx # Slide-up form to create a new note  (Step 3)
+│   │   └── NoteFormModal.tsx   # Slide-up form — create OR edit a note  (Step 5)
 │   │
 │   ├── constants/
 │   │   ├── colors.ts           # Central colour palette
 │   │   └── categories.ts       # Note categories + their colours
+│   │
+│   ├── hooks/
+│   │   └── useNotes.ts         # Custom hook — notes state + AsyncStorage  (Step 6)
 │   │
 │   ├── types/
 │   │   └── note.ts             # TypeScript Note interface
@@ -71,9 +74,9 @@ NotesApp/
 | 2 | NoteCard Component — Categories & Dynamic Styling | ✅ Done |
 | 3 | Add Note — `useState` + `TextInput` + `Modal` | ✅ Done |
 | 4 | Navigation — Note Detail Screen | ✅ Done |
-| 5 | Edit & Delete Notes | ⬜ Next |
-| 6 | Persist Data — AsyncStorage | ⬜ |
-| 7 | Global State — Context API | ⬜ |
+| 5 | Edit & Delete Notes | ✅ Done |
+| 6 | Persist Data — AsyncStorage | ✅ Done |
+| 7 | Global State — Context API | ⬜ Next |
 | 8 | Search & Filter | ⬜ |
 | 9 | Polish — UI, icons, animations | ⬜ |
 
@@ -574,12 +577,248 @@ Use it for detail screens, forms, or any content that might be long.
 
 ---
 
+### Step 5 — Edit & Delete: `Alert`, `filter`, `map`
+
+#### `Alert.alert()` — Native Dialog
+Shows a native OS dialog with configurable buttons. Does not block JavaScript execution.
+
+```tsx
+Alert.alert(
+  "Delete Note",                             // title
+  "This cannot be undone.",                  // message
+  [
+    { text: "Cancel",  style: "cancel" },    // dismisses the dialog
+    { text: "Delete",  style: "destructive", // red on iOS — signals danger
+      onPress: () => deleteNote(id) },
+  ]
+);
+```
+
+| Button style | Behaviour |
+|---|---|
+| `"default"` | Standard button |
+| `"cancel"` | Bold on iOS, handles Android Back press |
+| `"destructive"` | Red text on iOS — use for irreversible actions |
+
+---
+
+#### `array.filter()` — Delete an Item
+Returns a **new** array containing only the items where the predicate returns `true`.
+
+```tsx
+// Delete: keep every note EXCEPT the one being deleted
+setNotes((prev) => prev.filter((n) => n.id !== deletedId));
+
+// Before: [noteA, noteB, noteC]   (deleting noteB)
+// After:  [noteA, noteC]
+```
+
+---
+
+#### `array.map()` — Update an Item
+Returns a **new** array where each item is transformed by the callback.
+
+```tsx
+// Update: swap the old version of a note for the new one
+setNotes((prev) =>
+  prev.map((n) => (n.id === updatedNote.id ? updatedNote : n))
+);
+
+// Before: [noteA, noteB,        noteC]
+// After:  [noteA, updatedNoteB, noteC]
+```
+
+> Both `filter` and `map` return **new** arrays — they never mutate the original.
+> That is why React detects the change and re-renders.
+
+---
+
+#### `onLongPress` — Secondary Gesture
+`TouchableOpacity` (and `Pressable`) supports a long-press gesture in addition to tap.
+
+```tsx
+<TouchableOpacity
+  onPress={handleTap}          // fires on a quick tap
+  onLongPress={handleLongPress} // fires after ~500ms hold
+>
+  ...
+</TouchableOpacity>
+```
+
+---
+
+#### One Component, Two Modes (`NoteFormModal`)
+Instead of a separate `CreateNoteModal` and `EditNoteModal`, one component
+accepts an optional `initialNote` prop that switches its behaviour.
+
+```tsx
+// Create mode — blank form
+<NoteFormModal visible={open} onSave={handleCreate} onClose={close} />
+
+// Edit mode — pre-filled form
+<NoteFormModal visible={open} initialNote={note} onSave={handleUpdate} onClose={close} />
+```
+
+Inside the component:
+```tsx
+const isEditMode = initialNote !== undefined;
+
+// Spread preserves id and createdAt; only overwrites the edited fields
+const saved = isEditMode
+  ? { ...initialNote, title, content, category }
+  : { id: Date.now().toString(), title, content, category, createdAt: new Date().toISOString() };
+```
+
+---
+
+### Step 6 — Persist Data: Custom Hooks & AsyncStorage
+
+#### Custom Hook
+A custom hook is a function whose name starts with `use` and that can call
+other hooks inside it. It extracts reusable stateful logic out of components.
+
+```ts
+// src/hooks/useNotes.ts
+export function useNotes() {
+  const [notes,     setNotes]     = useState<Note[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // load on mount, auto-save on change ...
+
+  return { notes, setNotes, isLoading }; // only expose what callers need
+}
+
+// In any screen:
+const { notes, setNotes, isLoading } = useNotes();
+```
+
+Benefits over raw `useState` in the component:
+- Screen focuses on UI; hook owns the data concern
+- Can be reused by multiple screens (Step 7 upgrades this to Context)
+- Logic is testable in isolation
+
+---
+
+#### `useEffect` Patterns
+
+```ts
+// Pattern 1 — run ONCE on mount (load initial data)
+useEffect(() => {
+  loadNotes();
+}, []); // empty array = no dependencies = never re-runs
+
+// Pattern 2 — run when a value changes (auto-save)
+useEffect(() => {
+  if (!isLoading) {     // guard: don't save before we've loaded
+    saveNotes(notes);
+  }
+}, [notes, isLoading]); // re-runs whenever notes OR isLoading changes
+```
+
+| Dependency array | When it runs |
+|---|---|
+| Omitted | After **every** render |
+| `[]` | Once — after the first render only |
+| `[a, b]` | After any render where `a` or `b` changed |
+
+---
+
+#### `async` / `await`
+Makes asynchronous code (I/O, network) read like synchronous code.
+
+```ts
+async function loadNotes() {
+  const json = await AsyncStorage.getItem(STORAGE_KEY);
+  // code here only runs AFTER getItem resolves
+  // the UI stays responsive while waiting
+}
+```
+
+- `async` before a function makes it return a `Promise`
+- `await` pauses execution **inside** the function until the `Promise` resolves
+- The rest of the app keeps running — only this function pauses
+
+---
+
+#### `try / catch / finally`
+
+```ts
+async function loadNotes() {
+  try {
+    const json = await AsyncStorage.getItem(STORAGE_KEY); // risky operation
+    setNotes(json ? JSON.parse(json) : DEFAULTS);
+  } catch (error) {
+    console.error("Load failed:", error);  // handle the failure
+    setNotes(DEFAULTS);                    // safe fallback
+  } finally {
+    setIsLoading(false); // ALWAYS runs — clears the spinner even on error
+  }
+}
+```
+
+---
+
+#### `AsyncStorage` — Device Persistence
+Key-value storage that survives the app being closed and reopened.
+
+```ts
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+// Write
+await AsyncStorage.setItem("@app/notes", JSON.stringify(notes));
+
+// Read (returns null if key doesn't exist)
+const json = await AsyncStorage.getItem("@app/notes");
+const notes = json ? JSON.parse(json) : [];
+
+// Delete
+await AsyncStorage.removeItem("@app/notes");
+```
+
+> Always namespace your keys (`@appname/keyname`) to avoid collisions with
+> other libraries that also use AsyncStorage.
+
+---
+
+#### `JSON.stringify` / `JSON.parse`
+AsyncStorage stores only **strings**. Use JSON to convert objects ↔ strings.
+
+```ts
+// Object → string (to store)
+const json = JSON.stringify([{ id: "1", title: "Hello" }]);
+// json = '[{"id":"1","title":"Hello"}]'
+
+// String → object (after reading)
+const notes = JSON.parse(json) as Note[];
+// notes = [{ id: "1", title: "Hello" }]
+```
+
+---
+
+#### `ActivityIndicator` — Loading Spinner
+Built-in React Native component that shows a platform-native spinner.
+
+```tsx
+import { ActivityIndicator } from "react-native";
+
+if (isLoading) {
+  return (
+    <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+      <ActivityIndicator size="large" color={Colors.primary} />
+    </View>
+  );
+}
+```
+
+The early-return pattern keeps the main render clean — it only runs
+when data is ready.
+
+---
+
 ## Coming Up
 
 | Step | What you'll learn |
 |------|------------------|
-| **Step 5** | Mutating state arrays, `Alert` dialog, edit & delete notes |
-| **Step 6** | `useEffect`, `async/await`, `AsyncStorage` — persist data on device |
-| **Step 7** | `createContext`, `useContext`, Provider pattern — global state |
+| **Step 7** | `createContext`, `useContext`, Provider pattern — share state across all screens |
 | **Step 8** | Derived state, filtering arrays, search bar |
 | **Step 9** | Safe area, icons (`@expo/vector-icons`), animated feedback |
