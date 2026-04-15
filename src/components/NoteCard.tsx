@@ -6,6 +6,9 @@
  * NEW IN STEP 2:
  *  - Category badge in the top-right corner with a dynamic background colour
  *
+ * NEW IN STEP 5:
+ *  - onLongPress prop — secondary gesture that triggers Edit / Delete actions
+ *
  * CONCEPTS:
  *  - Props interface        : TypeScript type describing what the component accepts
  *  - numberOfLines          : clamps Text to N lines, adds "…" automatically
@@ -27,8 +30,13 @@ import { formatDate } from "../utils/date";
 interface NoteCardProps {
   /** The note data to display */
   note: Note;
-  /** Called when the user taps the card */
+  /** Called when the user taps the card (navigate to detail) */
   onPress: () => void;
+  /**
+   * Called when the user long-presses the card (edit / delete actions).
+   * Optional — not every list context needs this gesture.
+   */
+  onLongPress?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -72,12 +80,22 @@ function CategoryBadge({ category }: { category?: NoteCategory }) {
 // ---------------------------------------------------------------------------
 // COMPONENT
 // ---------------------------------------------------------------------------
-export default function NoteCard({ note, onPress }: NoteCardProps) {
+export default function NoteCard({ note, onPress, onLongPress }: NoteCardProps) {
   const preview =
     note.content.length > 80 ? note.content.slice(0, 80) + "…" : note.content;
 
   return (
-    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.7}>
+    /*
+     * onLongPress — fires after the user holds their finger down for ~500ms.
+     * It's a secondary gesture, so it doesn't interfere with a normal tap.
+     * We use it here to open the Edit / Delete action menu.
+     */
+    <TouchableOpacity
+      style={styles.card}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      activeOpacity={0.7}
+    >
 
       {/*
         Header row: title on the left, category badge on the right.

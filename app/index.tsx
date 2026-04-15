@@ -1,47 +1,47 @@
 /**
  * app/index.tsx — Home Screen
  *
- * WHAT CHANGED IN STEP 3:
- *  - Notes are now held in React state (useState) instead of a plain variable.
- *  - Tapping FAB opens a CreateNoteModal.
- *  - Saving a note prepends it to the list and closes the modal.
+ * WHAT CHANGED IN STEP 5:
+ *  - Long-pressing a card opens an Alert with Edit / Delete options.
+ *  - Delete shows a confirmation Alert then removes the note via filter().
+ *  - Edit opens NoteFormModal pre-filled; saving updates the note via map().
+ *  - CreateNoteModal replaced by NoteFormModal (handles both create + edit).
  *
- * KEY CONCEPT — useState:
- *  const [value, setValue] = useState(initial)
- *  - `value`    : the current state (read-only — never mutate directly)
- *  - `setValue` : the setter — calling it triggers a re-render with the new value
- *  - `initial`  : the value on the very first render only
+ * KEY CONCEPTS:
  *
- * WHY NOT just do `notes.push(newNote)`?
- *  Mutating the array directly doesn't tell React anything changed,
- *  so the screen would NOT re-render. You must always call the setter.
+ *  Alert.alert(title, message, buttons)
+ *    Native OS dialog. Each button is { text, style, onPress }.
+ *    style: "destructive" → red button on iOS (signals a dangerous action).
+ *    style: "cancel"      → bold/left-aligned on iOS, dismisses on Android back.
  *
- * WHAT CHANGED IN STEP 4:
- *  - Imported useRouter for programmatic navigation.
- *  - Card tap navigates to "/detail" passing the note's fields as params.
+ *  array.filter(predicate)
+ *    Returns a NEW array containing only the items where predicate returns true.
+ *    Used to DELETE a note: keep every note whose id is NOT the deleted one.
+ *
+ *  array.map(transform)
+ *    Returns a NEW array where each item is replaced by transform(item).
+ *    Used to UPDATE a note: swap the old version for the new one by matching id.
  */
 
 import { useRouter } from "expo-router";
 import { useState } from "react";
-import { FlatList, StyleSheet, View } from "react-native";
+import { Alert, FlatList, StyleSheet, View } from "react-native";
 
-import CreateNoteModal from "../src/components/CreateNoteModal";
 import EmptyState from "../src/components/EmptyState";
 import FAB from "../src/components/FAB";
 import NoteCard from "../src/components/NoteCard";
+import NoteFormModal from "../src/components/NoteFormModal";
 import { Colors } from "../src/constants/colors";
 import { Note } from "../src/types/note";
 
 // ---------------------------------------------------------------------------
 // INITIAL DATA
 // ---------------------------------------------------------------------------
-// Still using sample notes as the starting data, but now they live inside
-// state — the user can add to them at runtime.
 const SAMPLE_NOTES: Note[] = [
   {
     id: "1",
     title: "Welcome to NotesApp!",
-    content: "This is your first note. Tap a note to read it, or press + to create one.",
+    content: "This is your first note. Tap a note to read it, or long-press to edit or delete.",
     createdAt: "2024-04-10T09:00:00.000Z",
     category: "Personal",
   },
@@ -85,59 +85,107 @@ const SAMPLE_NOTES: Note[] = [
 // SCREEN
 // ---------------------------------------------------------------------------
 export default function HomeScreen() {
-
-  // ── State ─────────────────────────────────────────────────────────────────
-  /**
-   * notes — the source of truth for the list.
-   *
-   * useState<Note[]> tells TypeScript this state holds an array of Notes.
-   * SAMPLE_NOTES is the initial value (used only on first render).
-   *
-   * Step 6: we'll load this from AsyncStorage instead of SAMPLE_NOTES.
-   */
-  const [notes, setNotes] = useState<Note[]>(SAMPLE_NOTES);
-
-  /**
-   * useRouter — gives you the router object for programmatic navigation.
-   *
-   * router.push(href)  — navigate to a new screen (adds it to the stack)
-   * router.back()      — go back to the previous screen
-   * router.replace()   — navigate without adding to the stack (no back button)
-   *
-   * We call it inside the component (not at module level) because hooks
-   * must always be called inside a React function component or custom hook.
-   */
   const router = useRouter();
 
-  /**
-   * modalVisible — controls whether the Create Note modal is open or closed.
-   *
-   * Only two possible values (true / false), so no generic needed —
-   * TypeScript infers `boolean` from the initial value `false`.
-   */
+  // ── State ─────────────────────────────────────────────────────────────────
+  const [notes, setNotes] = useState<Note[]>(SAMPLE_NOTES);
+
+  /** Controls the create/edit modal visibility */
   const [modalVisible, setModalVisible] = useState(false);
 
-  // ── Handlers ──────────────────────────────────────────────────────────────
   /**
-   * Called by CreateNoteModal when the user taps Save.
+   * The note currently being edited, or null when creating a new note.
+   * `Note | null` — this state can be either a Note object or null.
    *
-   * FUNCTIONAL STATE UPDATE — setNotes(prev => ...)
-   * ─────────────────────────────────────────────────
-   * Instead of `setNotes([newNote, ...notes])` we pass a function to the setter.
-   * React calls that function with the LATEST state as `prev`.
-   *
-   * Why? If two updates happen in the same render cycle,
-   * using `notes` directly (closure value) could be stale.
-   * Using the functional form always operates on the freshest value.
-   *
-   * [newNote, ...prev] — spread syntax:
-   *   Puts newNote first so newest notes appear at the top of the list.
-   *   `...prev` copies all existing notes after it.
-   *   This creates a BRAND NEW array (never mutates the old one).
+   * null    → modal is in CREATE mode
+   * <Note>  → modal is in EDIT mode, pre-filled with this note
    */
-  function handleSaveNote(newNote: Note) {
+  const [editingNote, setEditingNote] = useState<Note | null>(null);
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+
+  /** Create — save brand new note, prepend to list */
+  function handleCreateNote(newNote: Note) {
     setNotes((prev) => [newNote, ...prev]);
     setModalVisible(false);
+  }
+
+  /** Edit — replace the matching note in the array */
+  function handleUpdateNote(updatedNote: Note) {
+    /**
+     * array.map(fn) — returns a NEW array.
+     * For each note: if the id matches, return the updated version;
+     * otherwise return the note unchanged.
+     *
+     * Before: [noteA, noteB, noteC]
+     * After:  [noteA, updatedNoteB, noteC]   (only the matching one changes)
+     */
+    setNotes((prev) =>
+      prev.map((n) => (n.id === updatedNote.id ? updatedNote : n))
+    );
+    setEditingNote(null);
+    setModalVisible(false);
+  }
+
+  /** Long-press — show Edit / Delete action sheet */
+  function handleLongPress(note: Note) {
+    /**
+     * Alert.alert(title, message, buttons)
+     * ─────────────────────────────────────
+     * `buttons` is an array of button configs:
+     *   text    — the label
+     *   style   — "default" | "cancel" | "destructive"
+     *   onPress — called when the button is tapped
+     *
+     * "cancel" button is automatically placed correctly per platform.
+     * "destructive" shows the text in red on iOS — signals danger.
+     */
+    Alert.alert(note.title, "What would you like to do?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Edit",
+        onPress: () => {
+          setEditingNote(note);  // put the note into edit state
+          setModalVisible(true); // open the modal (NoteFormModal sees initialNote)
+        },
+      },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () => handleDeleteConfirm(note),
+      },
+    ]);
+  }
+
+  /** Delete — ask for confirmation before removing */
+  function handleDeleteConfirm(note: Note) {
+    Alert.alert(
+      "Delete Note",
+      `"${note.title}" will be permanently deleted. This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => {
+            /**
+             * array.filter(predicate) — returns a NEW array.
+             * Keeps only the notes whose id does NOT match the deleted one.
+             *
+             * Before: [note1, note2, note3]  (note2 is being deleted)
+             * After:  [note1, note3]
+             */
+            setNotes((prev) => prev.filter((n) => n.id !== note.id));
+          },
+        },
+      ]
+    );
+  }
+
+  /** FAB tap — open modal in create mode */
+  function handleFABPress() {
+    setEditingNote(null);    // clear any previous edit target
+    setModalVisible(true);
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -149,17 +197,7 @@ export default function HomeScreen() {
         renderItem={({ item }) => (
           <NoteCard
             note={item}
-            onPress={() => {
-              /**
-               * router.push() — navigate to the detail screen.
-               *
-               * `pathname` — which route to open ("/detail" = app/detail.tsx)
-               * `params`   — key/value pairs passed as URL query params.
-               *
-               * ALL param values must be strings (URL limitation).
-               * category is optional so we fall back to "" if undefined —
-               * detail.tsx converts "" back to undefined on the other side.
-               */
+            onPress={() =>
               router.push({
                 pathname: "/detail",
                 params: {
@@ -169,26 +207,33 @@ export default function HomeScreen() {
                   category:  item.category ?? "",
                   createdAt: item.createdAt,
                 },
-              });
-            }}
+              })
+            }
+            // Long-press opens the Edit / Delete action Alert
+            onLongPress={() => handleLongPress(item)}
           />
         )}
         ListEmptyComponent={<EmptyState />}
         contentContainerStyle={styles.listContent}
       />
 
-      {/* FAB — opens the create modal */}
-      <FAB onPress={() => setModalVisible(true)} />
+      <FAB onPress={handleFABPress} />
 
       {/**
-       * CreateNoteModal sits outside the FlatList so it can overlay the
-       * entire screen. It is always in the tree but only visible when
-       * modalVisible === true (the Modal component handles show/hide internally).
+       * NoteFormModal handles both create and edit:
+       *   editingNote === null  → create mode (blank form)
+       *   editingNote !== null  → edit mode (pre-filled form)
+       *
+       * We pass the right onSave handler for each mode.
        */}
-      <CreateNoteModal
+      <NoteFormModal
         visible={modalVisible}
-        onSave={handleSaveNote}
-        onClose={() => setModalVisible(false)}
+        initialNote={editingNote ?? undefined}
+        onSave={editingNote ? handleUpdateNote : handleCreateNote}
+        onClose={() => {
+          setModalVisible(false);
+          setEditingNote(null);
+        }}
       />
     </View>
   );
