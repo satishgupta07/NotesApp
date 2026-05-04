@@ -1,11 +1,12 @@
 /**
  * app/index.tsx — Home Screen
  *
- * WHAT CHANGED IN STEP 8:
- *  - Search bar at the top lets the user filter notes by title or content.
- *  - Category pills let the user narrow results to one category.
- *  - filteredNotes is DERIVED STATE — computed from notes + search inputs.
- *  - useMemo caches the result so the filter only reruns when inputs change.
+ * WHAT CHANGED IN STEP 9:
+ *  - useSafeAreaInsets: FAB bottom position and list bottom padding now account
+ *    for the device's home indicator / navigation bar height so content is
+ *    never hidden behind system UI.
+ *  - expo-haptics: added tactile feedback on long-press (medium impact) and
+ *    on delete confirmation (heavy impact).
  *
  * KEY CONCEPT — Derived State
  * ────────────────────────────
@@ -25,6 +26,7 @@
  * the cached value — no wasted filtering work.
  */
 
+import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import { useMemo, useState } from "react";
 import {
@@ -37,6 +39,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import EmptyState from "../src/components/EmptyState";
 import FAB from "../src/components/FAB";
@@ -51,6 +54,21 @@ import { Note } from "../src/types/note";
 export default function HomeScreen() {
   const router = useRouter();
   const { notes, isLoading, addNote, updateNote, deleteNote } = useNotesContext();
+
+  /**
+   * useSafeAreaInsets()
+   * ────────────────────
+   * Returns the safe area inset distances for the current device:
+   *   { top, bottom, left, right }
+   *
+   * On iPhone with a home indicator: bottom ≈ 34 px
+   * On Android with a navigation bar: bottom ≈ 24–48 px
+   * On devices with no system UI intrusion: bottom = 0
+   *
+   * We use `insets.bottom` to push the FAB and list content above the
+   * home indicator so they're never obscured by system UI.
+   */
+  const insets = useSafeAreaInsets();
 
   // ── Search & filter state ─────────────────────────────────────────────────
   const [searchQuery,      setSearchQuery]      = useState("");
@@ -77,15 +95,8 @@ export default function HomeScreen() {
   const filteredNotes = useMemo(() => {
     let result = notes;
 
-    // ── Step 1: filter by search text ───────────────────────────────────────
     const query = searchQuery.trim().toLowerCase();
     if (query) {
-      /**
-       * String.prototype.includes(substr) — returns true if substr appears
-       * anywhere in the string. Case-insensitive because we lowercase both.
-       *
-       * We check BOTH title and content so the search is comprehensive.
-       */
       result = result.filter(
         (note) =>
           note.title.toLowerCase().includes(query) ||
@@ -93,13 +104,12 @@ export default function HomeScreen() {
       );
     }
 
-    // ── Step 2: filter by selected category ─────────────────────────────────
     if (selectedCategory) {
       result = result.filter((note) => note.category === selectedCategory);
     }
 
     return result;
-  }, [notes, searchQuery, selectedCategory]); // ← recompute only when these change
+  }, [notes, searchQuery, selectedCategory]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   function handleCreateNote(newNote: Note) {
@@ -114,6 +124,17 @@ export default function HomeScreen() {
   }
 
   function handleLongPress(note: Note) {
+    /**
+     * Haptics.impactAsync(style)
+     * ───────────────────────────
+     * Triggers a haptic impact feedback vibration.
+     * ImpactFeedbackStyle.Medium → a moderate tap vibration.
+     *
+     * This fires when the user long-presses a note, giving them
+     * confirmation that the gesture was recognized before the Alert appears.
+     */
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
     Alert.alert(note.title, "What would you like to do?", [
       { text: "Cancel", style: "cancel" },
       {
@@ -137,7 +158,15 @@ export default function HomeScreen() {
         {
           text: "Delete",
           style: "destructive",
-          onPress: () => deleteNote(note.id),
+          onPress: () => {
+            /**
+             * ImpactFeedbackStyle.Heavy → a strong, definitive thud.
+             * Fires at the moment of deletion to reinforce that a
+             * permanent destructive action has completed.
+             */
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+            deleteNote(note.id);
+          },
         },
       ]
     );
@@ -161,26 +190,24 @@ export default function HomeScreen() {
   // ── Render ────────────────────────────────────────────────────────────────
   const isSearchActive = searchQuery.trim().length > 0 || selectedCategory !== null;
 
+  /**
+   * FAB bottom offset: always stays 32px above the safe area boundary.
+   * Without this, on iPhone the FAB would sit behind the home indicator.
+   */
+  const fabBottom = 32 + insets.bottom;
+
   return (
     <View style={styles.container}>
 
       {/* ── Search & filter bar (fixed, does not scroll with the list) ── */}
       <View style={styles.filterArea}>
 
-        {/* Search input */}
         <SearchBar
           value={searchQuery}
           onChangeText={setSearchQuery}
           placeholder="Search notes…"
         />
 
-        {/**
-         * Category filter pills — horizontal ScrollView so they scroll
-         * if there are more pills than fit on screen.
-         *
-         * showsHorizontalScrollIndicator={false} hides the scroll bar
-         * (common UX for pill rows — the scroll is implied by the layout).
-         */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -191,9 +218,7 @@ export default function HomeScreen() {
           <TouchableOpacity
             style={[
               styles.pill,
-              selectedCategory === null
-                ? styles.pillActive           // highlight when no category selected
-                : styles.pillInactive,
+              selectedCategory === null ? styles.pillActive : styles.pillInactive,
             ]}
             onPress={() => setSelectedCategory(null)}
             activeOpacity={0.7}
@@ -208,10 +233,6 @@ export default function HomeScreen() {
             </Text>
           </TouchableOpacity>
 
-          {/**
-           * One pill per category — mapped from ALL_CATEGORIES.
-           * Tapping selects that category; tapping again deselects (toggle).
-           */}
           {ALL_CATEGORIES.map((cat) => {
             const isActive = selectedCategory === cat;
             return (
@@ -223,10 +244,7 @@ export default function HomeScreen() {
                     ? [styles.pillActive, { backgroundColor: CATEGORY_COLORS[cat] }]
                     : styles.pillInactive,
                 ]}
-                onPress={() =>
-                  // Toggle: if already selected → clear; else → select
-                  setSelectedCategory(isActive ? null : cat)
-                }
+                onPress={() => setSelectedCategory(isActive ? null : cat)}
                 activeOpacity={0.7}
               >
                 <Text style={[styles.pillText, isActive && styles.pillTextActive]}>
@@ -251,10 +269,6 @@ export default function HomeScreen() {
             onLongPress={() => handleLongPress(item)}
           />
         )}
-        /**
-         * Show a different empty message depending on whether a search is
-         * active or the notes list itself is simply empty.
-         */
         ListEmptyComponent={
           isSearchActive ? (
             <EmptyState
@@ -265,11 +279,27 @@ export default function HomeScreen() {
             <EmptyState />
           )
         }
-        contentContainerStyle={styles.listContent}
-        keyboardShouldPersistTaps="handled" // tapping a card closes the keyboard
+        /**
+         * contentContainerStyle bottom padding accounts for the FAB height
+         * (56px) + its bottom offset + the safe area inset, so the last
+         * note is never hidden behind the FAB or the system home indicator.
+         */
+        contentContainerStyle={[
+          styles.listContent,
+          { paddingBottom: 56 + fabBottom + 16 },
+        ]}
+        keyboardShouldPersistTaps="handled"
       />
 
-      <FAB onPress={handleFABPress} />
+      {/**
+       * Pass the safe-area-aware bottom as a style override.
+       * FAB renders its own `position: absolute` — we override `bottom`
+       * by passing it as an inline style on the wrapper inside FAB.
+       *
+       * We pass fabBottom as a prop so FAB doesn't need to know about
+       * safe areas — the parent handles layout, FAB handles appearance.
+       */}
+      <FAB onPress={handleFABPress} bottomOffset={fabBottom} />
 
       <NoteFormModal
         visible={modalVisible}
@@ -347,6 +377,5 @@ const styles = StyleSheet.create({
   // ── List ──────────────────────────────────────────────────────────────────
   listContent: {
     padding: 16,
-    paddingBottom: 100,
   },
 });

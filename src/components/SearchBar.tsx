@@ -1,23 +1,25 @@
 /**
  * src/components/SearchBar.tsx — Text Search Input
  *
- * A styled search field with a clear button.
- * Reusable anywhere a text-search input is needed.
+ * WHAT CHANGED IN STEP 9:
+ *  - Replaced Unicode text characters (⌕ / ✕) with Ionicons vector icons.
+ *    Vector icons render crisp at any size/density and look native on both platforms.
  *
  * CONCEPTS:
- *  - useRef          : hold a reference to the TextInput DOM node so we can
- *                      call .focus() / .blur() programmatically
- *  - Conditional JSX : only render the clear button when there is text to clear
- *  - forwardRef      : not needed here since we own the ref internally
+ *  - @expo/vector-icons  : icon font library bundled with Expo. Ionicons is one
+ *                          of the included sets (from Ionic Framework).
+ *  - useRef              : hold a reference to the TextInput node so we can
+ *                          call .focus() / .blur() programmatically
+ *  - Conditional JSX     : only render the clear button when there is text to clear
  */
 
+import { Ionicons } from "@expo/vector-icons";
 import { useRef } from "react";
 import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
   View,
-  Text,
 } from "react-native";
 import { Colors } from "../constants/colors";
 
@@ -45,16 +47,11 @@ export default function SearchBar({
   /**
    * useRef<TextInput>(null)
    * ────────────────────────
-   * useRef stores a mutable value that persists across renders WITHOUT
-   * causing a re-render when it changes (unlike useState).
+   * Stores a reference to the native TextInput node.
+   * `inputRef.current` is the actual element — we call `.focus()` on it
+   * when the user taps the search icon so the keyboard opens.
    *
-   * Here we use it to hold a reference to the native TextInput element.
-   * `inputRef.current` is the actual TextInput node — we call `.focus()`
-   * on it when the user taps the search icon (so the keyboard opens).
-   *
-   * Common useRef uses:
-   *   - DOM/native node references (focus, scroll, measure)
-   *   - Storing a value that shouldn't trigger re-renders (timers, previous values)
+   * Unlike useState, changing a ref does NOT trigger a re-render.
    */
   const inputRef = useRef<TextInput>(null);
 
@@ -65,17 +62,21 @@ export default function SearchBar({
 
   return (
     <View style={styles.container}>
-      {/* Search icon — tapping it focuses the input */}
+      {/**
+       * Search icon — tapping it focuses the input.
+       *
+       * Ionicons.name follows the Ionicons naming convention:
+       *   "search-outline"  → the stroke/outline variant
+       *   "search"          → the filled variant
+       * Full list: https://ionic.io/ionicons
+       */}
       <TouchableOpacity onPress={() => inputRef.current?.focus()} style={styles.iconWrap}>
-        <Text style={styles.icon}>⌕</Text>
+        <Ionicons name="search-outline" size={20} color={Colors.textMuted} />
       </TouchableOpacity>
 
       {/**
        * TextInput — controlled by the parent via value + onChangeText.
        * `ref={inputRef}` attaches the ref so we can call .focus() on it.
-       *
-       * clearButtonMode="never" — we draw our own clear button so it looks
-       * the same on Android and iOS (the native one only shows on iOS).
        */}
       <TextInput
         ref={inputRef}
@@ -97,7 +98,7 @@ export default function SearchBar({
        */}
       {value.length > 0 && (
         <TouchableOpacity onPress={handleClear} style={styles.clearBtn}>
-          <Text style={styles.clearIcon}>✕</Text>
+          <Ionicons name="close-circle" size={18} color={Colors.textMuted} />
         </TouchableOpacity>
       )}
     </View>
@@ -115,7 +116,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 12,
     height: 44,
-    // subtle shadow so it lifts slightly off the background
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.06,
@@ -125,22 +125,14 @@ const styles = StyleSheet.create({
   iconWrap: {
     marginRight: 8,
   },
-  icon: {
-    fontSize: 20,
-    color: Colors.textMuted,
-  },
   input: {
-    flex: 1,          // take all remaining width between icon and clear button
+    flex: 1,
     fontSize: 15,
     color: Colors.textPrimary,
-    paddingVertical: 0, // remove default vertical padding on Android
+    paddingVertical: 0,
   },
   clearBtn: {
     marginLeft: 8,
-    padding: 4,       // extra tap area
-  },
-  clearIcon: {
-    fontSize: 14,
-    color: Colors.textMuted,
+    padding: 4,
   },
 });

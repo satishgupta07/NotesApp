@@ -37,23 +37,27 @@ Then either:
 ```
 NotesApp/
 ├── app/                        # Expo Router screens (each file = one route)
-│   ├── _layout.tsx             # Root Stack navigator + shared header config
-│   ├── index.tsx               # Home Screen — notes list
-│   └── detail.tsx              # Detail Screen — full note view  (Step 4)
+│   ├── _layout.tsx             # Root layout — SafeAreaProvider + NotesProvider + Stack
+│   ├── index.tsx               # Home Screen — notes list, search, filter
+│   └── detail.tsx              # Detail Screen — full note view
 │
 ├── src/
 │   ├── components/             # Reusable UI pieces
 │   │   ├── NoteCard.tsx        # Single note row with category badge
 │   │   ├── EmptyState.tsx      # Shown when the list has no items
-│   │   ├── FAB.tsx             # Floating Action Button (the + button)
-│   │   └── NoteFormModal.tsx   # Slide-up form — create OR edit a note  (Step 5)
+│   │   ├── FAB.tsx             # Floating Action Button — Ionicons + spring animation
+│   │   ├── NoteFormModal.tsx   # Slide-up form — create OR edit a note
+│   │   └── SearchBar.tsx       # Search input with Ionicons icons
 │   │
 │   ├── constants/
 │   │   ├── colors.ts           # Central colour palette
 │   │   └── categories.ts       # Note categories + their colours
 │   │
+│   ├── context/
+│   │   └── NotesContext.tsx    # Context API — global notes state
+│   │
 │   ├── hooks/
-│   │   └── useNotes.ts         # Custom hook — notes state + AsyncStorage  (Step 6)
+│   │   └── useNotes.ts         # Custom hook — notes state + AsyncStorage
 │   │
 │   ├── types/
 │   │   └── note.ts             # TypeScript Note interface
@@ -76,9 +80,9 @@ NotesApp/
 | 4 | Navigation — Note Detail Screen | ✅ Done |
 | 5 | Edit & Delete Notes | ✅ Done |
 | 6 | Persist Data — AsyncStorage | ✅ Done |
-| 7 | Global State — Context API | ⬜ Next |
-| 8 | Search & Filter | ⬜ |
-| 9 | Polish — UI, icons, animations | ⬜ |
+| 7 | Global State — Context API | ✅ Done |
+| 8 | Search & Filter — Derived State, `useMemo` | ✅ Done |
+| 9 | Polish — Icons, Animations, Safe Area, Haptics | ✅ Done |
 
 ---
 
@@ -195,11 +199,8 @@ Every file inside `app/` automatically becomes a screen. No manual route registr
 
 ```
 app/index.tsx      →  "/"        (Home Screen)
-app/detail.tsx     →  "/detail"  (Detail Screen — Step 4)
+app/detail.tsx     →  "/detail"  (Detail Screen)
 ```
-
-> Note creation (Step 3) uses a `Modal` overlay rather than a separate route,
-> so there is no `create.tsx` file. Step 7 (Context API) will revisit this.
 
 `app/_layout.tsx` wraps all sibling screens — like a template that stays on screen
 while the inner route changes.
@@ -487,13 +488,7 @@ Pass data to the next screen as URL query params.
 ```tsx
 router.push({
   pathname: "/detail",
-  params: {
-    id:        item.id,
-    title:     item.title,
-    content:   item.content,
-    category:  item.category ?? "", // undefined is not a valid param value
-    createdAt: item.createdAt,
-  },
+  params: { id: item.id },  // pass only the id — detail reads live data from context
 });
 ```
 
@@ -508,16 +503,10 @@ Read the params in the destination screen. The generic `<T>` types the result.
 ```tsx
 import { useLocalSearchParams } from "expo-router";
 
-const { id, title, content, category, createdAt } = useLocalSearchParams<{
-  id:        string;
-  title:     string;
-  content:   string;
-  category:  string;
-  createdAt: string;
-}>();
+const { id } = useLocalSearchParams<{ id: string }>();
 
-// Params arrive as strings — cast/parse as needed
-const noteCategory = (category || undefined) as NoteCategory | undefined;
+// Look up the full note from context using the id
+const note = notes.find((n) => n.id === id);
 ```
 
 ---
@@ -527,12 +516,11 @@ Render `<Stack.Screen>` anywhere inside a screen to set its header options at ru
 
 ```tsx
 export default function DetailScreen() {
-  const { title } = useLocalSearchParams<{ title: string }>();
+  const note = /* looked up from context */;
 
   return (
     <>
-      {/* Sets the header title to the actual note title */}
-      <Stack.Screen options={{ title: title ?? "Note" }} />
+      <Stack.Screen options={{ title: note.title }} />
       <ScrollView>...</ScrollView>
     </>
   );
@@ -552,7 +540,7 @@ Apply styles to **all** screens in a Stack at once. Per-screen `options` merge o
     headerTitleStyle: { fontWeight: "bold" },
   }}
 >
-  <Stack.Screen name="index"  options={{ title: "My Notes" }} />   // overrides title only
+  <Stack.Screen name="index"  options={{ title: "My Notes" }} />
   <Stack.Screen name="detail" options={{ headerBackTitle: "Notes" }} />
 </Stack>
 ```
@@ -638,7 +626,7 @@ setNotes((prev) =>
 
 ```tsx
 <TouchableOpacity
-  onPress={handleTap}          // fires on a quick tap
+  onPress={handleTap}           // fires on a quick tap
   onLongPress={handleLongPress} // fires after ~500ms hold
 >
   ...
@@ -694,7 +682,7 @@ const { notes, setNotes, isLoading } = useNotes();
 
 Benefits over raw `useState` in the component:
 - Screen focuses on UI; hook owns the data concern
-- Can be reused by multiple screens (Step 7 upgrades this to Context)
+- Can be reused by multiple screens
 - Logic is testable in isolation
 
 ---
@@ -799,8 +787,6 @@ const notes = JSON.parse(json) as Note[];
 Built-in React Native component that shows a platform-native spinner.
 
 ```tsx
-import { ActivityIndicator } from "react-native";
-
 if (isLoading) {
   return (
     <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
@@ -810,15 +796,319 @@ if (isLoading) {
 }
 ```
 
-The early-return pattern keeps the main render clean — it only runs
-when data is ready.
+---
+
+### Step 7 — Global State: Context API
+
+#### The Problem — Prop Drilling
+When state lives in a parent and a deeply nested child needs it, you must pass
+it through every component in between — even ones that don't use it.
+
+```
+RootLayout
+  └─ HomeScreen         ← owns notes state
+       └─ NoteCard
+            └─ (grandchild wants notes?)   ← must receive it as a prop all the way down
+```
+
+**Context eliminates this.** Any component anywhere in the tree can read from
+the context directly — no intermediary props needed.
 
 ---
 
-## Coming Up
+#### How Context Works
 
-| Step | What you'll learn |
-|------|------------------|
-| **Step 7** | `createContext`, `useContext`, Provider pattern — share state across all screens |
-| **Step 8** | Derived state, filtering arrays, search bar |
-| **Step 9** | Safe area, icons (`@expo/vector-icons`), animated feedback |
+```
+createContext()    ← creates the "channel" (a container for a value)
+<Context.Provider> ← broadcasts a value DOWN the component tree
+useContext()       ← any descendant reads that value
+```
+
+```
+Provider
+  ├─ Screen A  →  useContext() reads the value ✅
+  ├─ Screen B  →  useContext() reads the value ✅
+  └─ Screen C  →  useContext() reads the value ✅
+```
+
+---
+
+#### `createContext` — Creating the Channel
+
+```ts
+// createContext<Type>(defaultValue)
+// The default is used ONLY when called outside any Provider — almost always a bug.
+const NotesContext = createContext<NotesContextValue | null>(null);
+```
+
+---
+
+#### Provider Component — Broadcasting the Value
+
+```tsx
+export function NotesProvider({ children }: { children: ReactNode }) {
+  const { notes, setNotes, isLoading } = useNotes(); // from our custom hook
+
+  function addNote(note: Note) {
+    setNotes((prev) => [note, ...prev]);
+  }
+
+  return (
+    // Every component INSIDE this Provider can read `value` via useContext
+    <NotesContext.Provider value={{ notes, isLoading, addNote, updateNote, deleteNote }}>
+      {children}
+    </NotesContext.Provider>
+  );
+}
+```
+
+Place the Provider at the root of your app (`_layout.tsx`) so every screen is
+a descendant.
+
+---
+
+#### Consumer Hook — Reading the Value
+
+```tsx
+export function useNotesContext(): NotesContextValue {
+  const ctx = useContext(NotesContext);
+
+  // Null-check gives a clear error if the Provider is missing
+  if (!ctx) throw new Error("useNotesContext() must be called inside <NotesProvider>");
+
+  return ctx;
+}
+
+// Usage in any screen — no prop passing required:
+const { notes, addNote, deleteNote } = useNotesContext();
+```
+
+> **Why wrap `useContext` in a custom hook?**
+> 1. The null-check gives a clear error if the Provider is missing.
+> 2. Callers import one thing (`useNotesContext`) instead of two (`useContext` + `NotesContext`).
+> 3. If the context shape changes, you update one function.
+
+---
+
+#### `array.find()` — Look Up One Item
+
+```ts
+// find(predicate) returns the FIRST item where predicate is true, or undefined
+const note = notes.find((n) => n.id === id);
+
+if (!note) {
+  // guard clause — return early rather than crashing
+  return <Text>Note not found</Text>;
+}
+```
+
+---
+
+### Step 8 — Search & Filter: Derived State & `useMemo`
+
+#### Derived State
+A value that can be **computed from existing state** should NOT be stored in its
+own `useState`. Doing so creates a second source of truth that can go out of sync.
+
+```tsx
+// ❌ Two sources of truth — have to keep them in sync manually
+const [notes, setNotes] = useState<Note[]>([]);
+const [filtered, setFiltered] = useState<Note[]>([]); // stale if notes changes!
+
+// ✅ Derived — computed from the real state
+const filtered = notes.filter((n) => n.title.includes(query));
+```
+
+The rule: **if you can compute it, don't store it.**
+
+```
+notes + searchQuery + selectedCategory  →  filteredNotes (derived)
+```
+
+---
+
+#### `useMemo` — Caching Expensive Computations
+
+```tsx
+// useMemo(computeFn, dependencies)
+// computeFn only reruns when one of the dependencies changes.
+// On other renders it returns the last cached result.
+
+const filteredNotes = useMemo(() => {
+  let result = notes;
+
+  const query = searchQuery.trim().toLowerCase();
+  if (query) {
+    result = result.filter(
+      (note) =>
+        note.title.toLowerCase().includes(query) ||
+        note.content.toLowerCase().includes(query)
+    );
+  }
+
+  if (selectedCategory) {
+    result = result.filter((note) => note.category === selectedCategory);
+  }
+
+  return result;
+}, [notes, searchQuery, selectedCategory]); // ← recompute only when these change
+```
+
+If the modal opens/closes (`modalVisible` changes), the filter does **not** rerun
+because `modalVisible` is not in the dependency array.
+
+---
+
+#### `useRef` — Mutable Value Without Re-renders
+
+```tsx
+// useRef stores a mutable value that persists across renders
+// WITHOUT causing a re-render when it changes (unlike useState)
+
+const inputRef = useRef<TextInput>(null);
+
+// Later: call methods on the DOM/native node directly
+inputRef.current?.focus();  // programmatically open the keyboard
+```
+
+Common uses:
+- Holding a reference to a native element (`.focus()`, `.blur()`, `.measure()`)
+- Storing values that shouldn't trigger renders (timers, previous values, animation values)
+
+---
+
+#### `String.prototype.includes()` — Substring Search
+
+```ts
+"Hello World".toLowerCase().includes("world") // → true
+"Hello World".toLowerCase().includes("xyz")   // → false
+
+// Search both title and content so results are comprehensive
+note.title.toLowerCase().includes(query) || note.content.toLowerCase().includes(query)
+```
+
+---
+
+#### Horizontal `ScrollView` — Pill Row
+
+```tsx
+<ScrollView
+  horizontal                          // scroll left/right instead of up/down
+  showsHorizontalScrollIndicator={false} // hide the scroll bar (implied by layout)
+  contentContainerStyle={{ flexDirection: "row", gap: 8 }}
+>
+  {categories.map((cat) => <Pill key={cat} label={cat} />)}
+</ScrollView>
+```
+
+---
+
+### Step 9 — Polish: Icons, Animation, Safe Area, Haptics
+
+#### `@expo/vector-icons` — Vector Icon Sets
+A library of icon fonts bundled with Expo. Includes Ionicons, MaterialIcons,
+FontAwesome, and more.
+
+```tsx
+import { Ionicons } from "@expo/vector-icons";
+
+// name follows the Ionicons naming convention:
+// "search-outline" = stroke variant   "search" = filled variant
+<Ionicons name="search-outline" size={20} color={Colors.textMuted} />
+<Ionicons name="close-circle"   size={18} color={Colors.textMuted} />
+<Ionicons name="add"            size={30} color={Colors.white} />
+```
+
+> Icons render crisp at any resolution — unlike Unicode characters (⌕, ✕, ＋)
+> which can look different across platforms and font sizes.
+
+---
+
+#### `Animated` API — Smooth Animations
+
+React Native's built-in animation system. Animated values change over time and
+drive style properties directly on the native thread — smooth 60fps motion.
+
+```tsx
+import { Animated } from "react-native";
+
+// 1. Create an Animated.Value (store in useRef so it persists across renders)
+const scaleAnim = useRef(new Animated.Value(1)).current;
+
+// 2. Animate it with spring physics
+Animated.spring(scaleAnim, {
+  toValue: 0.88,           // target value
+  useNativeDriver: true,   // runs on native thread — no JS bridge overhead
+}).start();
+
+// 3. Use it in a style via Animated.View
+<Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+  <TouchableOpacity ... />
+</Animated.View>
+```
+
+| Animation type | Behaviour |
+|---|---|
+| `Animated.spring` | Physics-based — natural bounce |
+| `Animated.timing` | Linear or eased — predictable duration |
+| `Animated.decay` | Slows to a stop — useful for fling gestures |
+
+`useNativeDriver: true` is critical for performance — it moves the animation
+entirely off the JavaScript thread so it can't be blocked by heavy JS work.
+
+---
+
+#### `useSafeAreaInsets` — Respecting System UI
+
+On modern devices, the screen extends behind the home indicator (iPhone) or
+navigation bar (Android). Content placed at the very bottom can be hidden.
+
+```tsx
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+// Returns: { top, bottom, left, right } in pixels
+const insets = useSafeAreaInsets();
+
+// Push FAB above the home indicator
+const fabBottom = 32 + insets.bottom;
+
+// Push list content above the FAB
+contentContainerStyle={{ paddingBottom: 56 + fabBottom + 16 }}
+```
+
+`SafeAreaProvider` must wrap the tree (in `_layout.tsx`) for the hook to work:
+
+```tsx
+import { SafeAreaProvider } from "react-native-safe-area-context";
+
+<SafeAreaProvider>
+  <NotesProvider>
+    <Stack>...</Stack>
+  </NotesProvider>
+</SafeAreaProvider>
+```
+
+---
+
+#### `expo-haptics` — Tactile Feedback
+
+Triggers vibration feedback that reinforces UI actions with physical sensation.
+
+```tsx
+import * as Haptics from "expo-haptics";
+
+// On long-press — acknowledges the gesture before the dialog appears
+Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+// On destructive delete — definitive thud confirms the action completed
+Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+```
+
+| Style | Feel | When to use |
+|---|---|---|
+| `Light` | Gentle tick | Selection changes, toggles |
+| `Medium` | Moderate tap | Long press, confirmations |
+| `Heavy` | Strong thud | Destructive or final actions |
+
+> Haptics are silently ignored on devices that don't support them (simulators,
+> older hardware) — no need to guard the call.
