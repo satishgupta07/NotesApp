@@ -33,6 +33,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ALL_CATEGORIES, CATEGORY_COLORS, NoteCategory } from "../constants/categories";
 import { Colors } from "../constants/colors";
@@ -66,6 +67,16 @@ export default function NoteFormModal({
 }: NoteFormModalProps) {
 
   const isEditMode = initialNote !== undefined;
+
+  /**
+   * Modals on Android (and full-screen modals on iOS) open over the entire
+   * window — including under the status bar / notch. Without padding-top the
+   * Cancel / Save buttons sit behind system UI and become unclickable.
+   *
+   * useSafeAreaInsets returns the device's safe area distances so we can
+   * push the header below any system UI on every device.
+   */
+  const insets = useSafeAreaInsets();
 
   // ── Form state ────────────────────────────────────────────────────────────
   const [title,    setTitle]    = useState("");
@@ -161,7 +172,13 @@ export default function NoteFormModal({
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
         {/* ── Header ──────────────────────────────────────────────────── */}
-        <View style={styles.header}>
+        {/**
+         * paddingTop = safe-area inset + base padding.
+         * On notched devices insets.top ≈ 44–54 px; on flat devices it's 0
+         * but the status bar still occupies space, so we keep a minimum
+         * of 14 px of breathing room above the buttons.
+         */}
+        <View style={[styles.header, { paddingTop: insets.top + 14 }]}>
           <TouchableOpacity onPress={handleClose} style={styles.headerBtn}>
             <Text style={styles.cancelText}>Cancel</Text>
           </TouchableOpacity>
@@ -249,7 +266,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingBottom: 14,
+    // paddingTop is set dynamically via insets.top + 14
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
     backgroundColor: Colors.surface,
